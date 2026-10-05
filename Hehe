@@ -1,0 +1,464 @@
+--// CENTIPIDE AUTO FARM
+--// READY + FARM + DODGE + REPLAY
+--// 1 BUTTON - BOTTOM RIGHT
+
+local Players = game:GetService("Players")
+local Workspace = game:GetService("Workspace")
+
+local LP = Players.LocalPlayer
+local PG = LP:WaitForChild("PlayerGui")
+
+local Running = false
+
+--==================================================
+-- SETTINGS
+--==================================================
+
+local AboveHeight = 5
+local EmergencyMargin = 8
+local PositionTolerance = 2
+local AttackDelay = 0.08
+
+--==================================================
+-- CHARACTER
+--==================================================
+
+local function Character()
+    return LP.Character
+end
+
+local function Humanoid()
+    local c = Character()
+    return c and c:FindFirstChildOfClass("Humanoid")
+end
+
+local function Root()
+    local c = Character()
+    return c and c:FindFirstChild("HumanoidRootPart")
+end
+
+--==================================================
+-- GUI
+--==================================================
+
+local old = PG:FindFirstChild("CentiAuto")
+if old then
+    old:Destroy()
+end
+
+local gui = Instance.new("ScreenGui")
+gui.Name = "CentiAuto"
+gui.ResetOnSpawn = false
+gui.IgnoreGuiInset = true
+gui.Parent = PG
+
+local button = Instance.new("TextButton")
+button.Size = UDim2.new(0, 175, 0, 52)
+button.Position = UDim2.new(1, -190, 1, -67)
+
+button.BackgroundColor3 = Color3.fromRGB(170, 40, 40)
+button.TextColor3 = Color3.new(1,1,1)
+button.TextSize = 20
+button.Font = Enum.Font.GothamBold
+button.Text = "CENTA: OFF"
+button.ZIndex = 100
+button.Parent = gui
+
+--==================================================
+-- FIND CENTIPIDE
+--==================================================
+
+local function FindCentipide()
+
+    local root = Root()
+    if not root then return nil end
+
+    local nearest = nil
+    local nearestDistance = math.huge
+
+    for _, obj in ipairs(Workspace:GetDescendants()) do
+
+        if obj:IsA("Model") then
+
+            local name = obj.Name:lower()
+
+            if name:find("centip", 1, true) then
+
+                local hum = obj:FindFirstChildOfClass("Humanoid")
+
+                local hrp =
+                    obj:FindFirstChild("HumanoidRootPart")
+                    or obj.PrimaryPart
+
+                if hum and hrp and hum.Health > 0 then
+
+                    local distance =
+                        (hrp.Position - root.Position).Magnitude
+
+                    if distance < nearestDistance then
+                        nearestDistance = distance
+                        nearest = obj
+                    end
+                end
+            end
+        end
+    end
+
+    return nearest
+end
+
+--==================================================
+-- TOOL / ATTACK
+--==================================================
+
+local function GetTool()
+
+    local char = Character()
+
+    if char then
+        for _, obj in ipairs(char:GetChildren()) do
+            if obj:IsA("Tool") then
+                return obj
+            end
+        end
+    end
+
+    local backpack = LP:FindFirstChildOfClass("Backpack")
+
+    if backpack then
+        for _, obj in ipairs(backpack:GetChildren()) do
+            if obj:IsA("Tool") then
+                return obj
+            end
+        end
+    end
+
+    return nil
+end
+
+local function Attack()
+
+    local tool = GetTool()
+    if not tool then return end
+
+    pcall(function()
+
+        local char = Character()
+        local hum = Humanoid()
+
+        if tool.Parent ~= char and hum then
+            hum:EquipTool(tool)
+            task.wait(0.03)
+        end
+
+        tool:Activate()
+
+    end)
+end
+
+--==================================================
+-- DODGE
+-- GIỮ NGUYÊN LOGIC BẢN ĐÃ NÉ ĐƯỢC
+--==================================================
+
+local function GetDebrisZone()
+
+    local folder =
+        Workspace:FindFirstChild("RaidDebrisVfx")
+
+    if not folder then
+        return nil
+    end
+
+    return folder:FindFirstChild("DebrisZone")
+end
+
+-- Kiểm tra điểm có nằm trong toàn bộ DebrisZone
+local function IsDangerous(pos, margin)
+
+    local zone = GetDebrisZone()
+
+    if not zone then
+        return false
+    end
+
+    local ok, result = pcall(function()
+
+        local cf = zone.CFrame
+        local size = zone.Size / 2
+
+        local localPos =
+            cf:PointToObjectSpace(pos)
+
+        return
+            math.abs(localPos.X) <= size.X + margin and
+            math.abs(localPos.Y) <= size.Y + margin and
+            math.abs(localPos.Z) <= size.Z + margin
+
+    end)
+
+    return ok and result
+end
+
+--==================================================
+-- SAFE POSITION
+--==================================================
+
+local function GetSafePosition(origin)
+
+    local offsets = {
+
+        Vector3.new(15, 5, 0),
+        Vector3.new(-15, 5, 0),
+
+        Vector3.new(0, 5, 15),
+        Vector3.new(0, 5, -15),
+
+        Vector3.new(20, 8, 20),
+        Vector3.new(-20, 8, 20),
+
+        Vector3.new(20, 8, -20),
+        Vector3.new(-20, 8, -20),
+
+    }
+
+    for _, offset in ipairs(offsets) do
+
+        local pos = origin + offset
+
+        if not IsDangerous(
+            pos,
+            EmergencyMargin
+        ) then
+
+            return pos
+
+        end
+    end
+
+    return origin + Vector3.new(0, 10, 0)
+end
+
+--==================================================
+-- EMERGENCY DODGE
+--==================================================
+
+local function EmergencyDodge()
+
+    local root = Root()
+
+    if not root then
+        return false
+    end
+
+    -- Chỉ né khi thực sự đang nằm trong vùng nguy hiểm
+    if IsDangerous(
+        root.Position,
+        EmergencyMargin
+    ) then
+
+        local safe =
+            GetSafePosition(root.Position)
+
+        pcall(function()
+            root.CFrame = CFrame.new(safe)
+        end)
+
+        task.wait(0.12)
+
+        return true
+    end
+
+    return false
+end
+
+--==================================================
+-- ABOVE CENTIPIDE
+--==================================================
+
+local function GetAbovePosition(enemy)
+
+    local hrp =
+        enemy:FindFirstChild("HumanoidRootPart")
+        or enemy.PrimaryPart
+
+    if not hrp then
+        return nil
+    end
+
+    return hrp.Position +
+        Vector3.new(0, AboveHeight, 0)
+end
+
+--==================================================
+-- READY
+-- BẢN ĐÃ TEST
+--==================================================
+
+local function FindReadyButton()
+
+    for _, obj in ipairs(PG:GetDescendants()) do
+
+        if obj:IsA("TextLabel")
+            and obj.Name == "Index"
+            and tostring(obj.Text or ""):lower() == "ready" then
+
+            local parent = obj.Parent
+
+            if parent and parent:IsA("GuiButton") then
+                return parent
+            end
+        end
+    end
+
+    return nil
+end
+
+local function ClickReady()
+
+    local btn = FindReadyButton()
+
+    if not btn then
+        return false
+    end
+
+    pcall(function()
+        btn:Activate()
+    end)
+
+    if firesignal then
+
+        pcall(function()
+            firesignal(btn.MouseButton1Click)
+        end)
+
+        pcall(function()
+            firesignal(btn.Activated)
+        end)
+
+    end
+
+    return true
+end
+
+--==================================================
+-- REPLAY
+-- BẢN ĐÃ TEST
+--==================================================
+
+local function FindReplayButton()
+
+    for _, obj in ipairs(PG:GetDescendants()) do
+
+        if obj:IsA("TextLabel") then
+
+            local text =
+                tostring(obj.Text or ""):lower()
+
+            if text:find("replay", 1, true) then
+
+                local parent = obj.Parent
+
+                if parent and parent:IsA("GuiButton") then
+                    return parent
+                end
+            end
+        end
+    end
+
+    return nil
+end
+
+local function ClickReplay()
+
+    local btn = FindReplayButton()
+
+    if not btn then
+        return false
+    end
+
+    pcall(function()
+        btn:Activate()
+    end)
+
+    if firesignal then
+
+        pcall(function()
+            firesignal(btn.MouseButton1Click)
+        end)
+
+        pcall(function()
+            firesignal(btn.Activated)
+        end)
+
+    end
+
+    return true
+end
+
+--==================================================
+-- MAIN LOOP
+--==================================================
+
+task.spawn(function()
+
+    while true do
+
+        task.wait(AttackDelay)
+
+        if not Running then
+            continue
+        end
+
+        --==========================================
+        -- REPLAY
+        --==========================================
+
+        if FindReplayButton() then
+
+            button.Text = "REPLAY..."
+
+            ClickReplay()
+
+            task.wait(1)
+
+            continue
+        end
+
+        --==========================================
+        -- READY
+        --==========================================
+
+        if FindReadyButton() then
+
+            button.Text = "READY..."
+
+            ClickReady()
+
+            task.wait(1)
+
+            continue
+        end
+
+        --==========================================
+        -- DODGE TRƯỚC
+        --==========================================
+
+        if EmergencyDodge() then
+
+            button.Text = "DODGE!"
+
+            continue
+        end
+
+        --==========================================
+        -- FIND CENTIPIDE
+        --==========================================
+
+        local enemy = FindCentipide()
+
+        if not enemy then
+
+            button.Text = "WAIT..."
+
+            task.wait(
